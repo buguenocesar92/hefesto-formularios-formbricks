@@ -1,0 +1,38 @@
+services:
+  formbricks:
+    ports:
+    - 127.0.0.1:8111:3000
+    environment:
+      WEBAPP_URL: http://localhost:8111
+      NEXTAUTH_URL: http://localhost:8111
+      SMTP_HOST: mailpit
+      SMTP_PORT: '1025'
+      SMTP_USER: ''
+      SMTP_PASSWORD: ''
+      SMTP_SECURE_ENABLED: '0'
+      SMTP_AUTHENTICATED: '0'
+      MAIL_FROM: formularios@example.invalid
+      EMAIL_VERIFICATION_DISABLED: '0'
+      PASSWORD_RESET_DISABLED: '0'
+      BOOTSTRAP_MODE: 'true'
+    depends_on:
+      mailpit:
+        condition: service_started
+  formbricks-migrate:
+    environment:
+      WEBAPP_URL: http://localhost:8111
+      NEXTAUTH_URL: http://localhost:8111
+      SMTP_HOST: mailpit
+      SMTP_PORT: '1025'
+      SMTP_USER: ''
+      SMTP_PASSWORD: ''
+      SMTP_SECURE_ENABLED: '0'
+      SMTP_AUTHENTICATED: '0'
+      MAIL_FROM: formularios@example.invalid
+      EMAIL_VERIFICATION_DISABLED: '0'
+      PASSWORD_RESET_DISABLED: '0'
+  mailpit:
+    image: axllent/mailpit:v1.31.6@sha256:23fe39e81bde596a918000b3135c0f85dc8bb4c9ea6be274b051143f3e300387
+    restart: unless-stopped
+    ports:
+    - 127.0.0.1:8029:8025

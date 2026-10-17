@@ -1,0 +1,17 @@
+{
+  "postgres": "pgvector/pgvector:pg18@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11",
+  "authzed-db-bootstrap": "pgvector/pgvector:pg18@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11",
+  "spicedb-migrate": "authzed/spicedb:v1.52.0@sha256:1d205e9e98e39d87f9640893a06787c854a77d1ffcc3f7ece5e3293896565aa9",
+  "spicedb": "authzed/spicedb:v1.52.0@sha256:1d205e9e98e39d87f9640893a06787c854a77d1ffcc3f7ece5e3293896565aa9",
+  "redis": "valkey/valkey@sha256:e0eb7c480958d32bdc4357a74bdd70653ae15f2f9b4c93c4a5a9fad1dc471c84",
+  "formbricks-migrate": "ghcr.io/formbricks/formbricks:6.0.2@sha256:4c0134b1c9c919d6d63986d5ba2e3ff4a50cf02a05b3173922c75c17539ef4cf",
+  "formbricks": "ghcr.io/formbricks/formbricks:6.0.2@sha256:4c0134b1c9c919d6d63986d5ba2e3ff4a50cf02a05b3173922c75c17539ef4cf",
+  "authzed-ops": "ghcr.io/formbricks/formbricks:6.0.2@sha256:4c0134b1c9c919d6d63986d5ba2e3ff4a50cf02a05b3173922c75c17539ef4cf",
+  "authzed-initialize": "ghcr.io/formbricks/formbricks:6.0.2@sha256:4c0134b1c9c919d6d63986d5ba2e3ff4a50cf02a05b3173922c75c17539ef4cf",
+  "hub-migrate": "ghcr.io/formbricks/hub@sha256:967089f22585f3c3730e455b8b20885b0739f26b5ce5e034324658aa51d627f2",
+  "hub": "ghcr.io/formbricks/hub@sha256:967089f22585f3c3730e455b8b20885b0739f26b5ce5e034324658aa51d627f2",
+  "cube": "ghcr.io/formbricks/cube:1.7.47-1@sha256:3859ec17f4e81fe5147cde8b6b81bccbed329023b803e4a315f0988e5c9372b8",
+  "hub-worker": "ghcr.io/formbricks/hub@sha256:967089f22585f3c3730e455b8b20885b0739f26b5ce5e034324658aa51d627f2",
+  "permissions": "pgvector/pgvector:pg18@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11",
+  "backup-tools": "pgvector/pgvector:pg18@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11"
+}

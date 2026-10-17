@@ -1,0 +1,11 @@
+# Aceptación en servidor de prueba
+- Compose config --quiet correcto; descarga de todos los digests compatible con arquitectura del servidor.
+- Inicialización y migraciones finalizan sin errores, Cube sano, SpiceDB sano y Hub/API/worker arrancan. Ejecutar el perfil authzed-ops health conforme al comando oficial para revisar autorización; no aplicar backfills o upgrades manuales sin revisar sus instrucciones.
+- Crear cuenta, recibir correo en Mailpit, verificarla, login/logout y recuperación; revisar comportamiento de nuevas altas después de la inicialización. Confirmar la política de altas/invitaciones antes de publicación: este kit no añade una capa propia que garantice cierre de registro.
+- Crear proyecto/encuesta ficticia, publicar enlace, responder desde otro navegador y móvil, ver resultados y exportar CSV. Comprobar que un visitante público no puede entrar al panel ni a respuestas.
+- Comprobar aislamiento entre los usuarios/espacios que se utilizarán. No prometer roles licenciados sin verlos disponibles.
+- Crear una imagen/adjunto ficticio solo si se piensa usar esa función; recrear contenedor y comprobar persistencia. Configurar y respaldar S3 aparte si se adopta almacenamiento externo. Los cuestionarios de ejemplo no requieren adjuntos.
+- Probar SMTP real y recuperación antes de marcar SMTP_READY; no exponer Mailpit.
+- En Coolify, solo HTTPS público hacia formbricks:3000; no puertos de DB, Redis, Hub, Cube ni SpiceDB. Validar origen/CSRF y enlaces del correo con el dominio real.
+- Generar respaldo, comprobarlo y restaurar en otro proyecto con red interna + Mailpit. Probar lectura, autorización y exportación; revisar reactivación de sesiones/colas/webhooks.
+- Probar conversión de un CSV exportado de esa instancia e importación de prueba en la versión real de Odoo. No basta el CSV de ejemplo para afirmar integración validada.
