@@ -42,7 +42,30 @@ Importar la carpeta completa desde un repositorio privado como recurso Docker Co
 
 Asignar un subdominio HTTPS únicamente al servicio **formbricks**, puerto **3000**. PostgreSQL, Valkey, SpiceDB, Hub, worker y Cube permanecen sin puertos públicos. No crear rutas que expongan Hub directamente: la app proporciona su proxy autenticado. No usar el override bootstrap públicamente ni abrir Mailpit.
 
-Si se migra del Compose manual a Coolify, los volúmenes del proyecto pueden tener otro nombre. No asumir que aparecen los datos: usar el procedimiento de respaldo/restauración y confirmar qué volúmenes administra Coolify. En despliegue manual, al salir del bootstrap detener con ambos archivos antes de recrear solo con compose.yaml, para retirar puertos locales y Mailpit.
+### Despliegue en Coolify (MVP Hefesto)
+El compose no declara `name:` a nivel raíz: Coolify asigna el nombre del proyecto al renderizar y, sin esa línea, el proyecto local toma el nombre de la carpeta. Si vienes de una instalación manual con `COMPOSE_PROJECT_NAME=hefesto-formularios`, fija esa variable en `.env` para conservar los volúmenes `postgres`, `redis`, `uploads` y `saml` que ya tengas con datos.
+
+Variables obligatorias (solo nombres; valores reales en `.env`):
+
+- `POSTGRES_PASSWORD`
+- `AUTHZED_DATABASE_PASSWORD`
+- `AUTHZED_TOKEN`
+- `WEBAPP_URL`, `NEXTAUTH_URL` (iguales, HTTPS, sin subruta)
+- `NEXTAUTH_SECRET`, `ENCRYPTION_KEY`, `CRON_SECRET` (cada uno, 64 caracteres hex)
+- `HUB_API_KEY`, `CUBEJS_API_SECRET`
+- `MAIL_FROM`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`
+- `OPERATOR_ACCOUNT_CREATED`
+
+Correo opcional. El kit puede partir sin SMTP real: pon `SMTP_READY=false` y, ya que el registro y la recuperación de contraseña necesitan correo, también `EMAIL_VERIFICATION_DISABLED=1`, `PASSWORD_RESET_DISABLED=1` y `INVITE_DISABLED=1`. Sin esos tres disables, el validador del servicio web (`ops/check-env.cjs`) aborta con un mensaje claro. Cuando actives el SMTP real más adelante, deja los disables en `0`.
+
+Cuenta operadora. Coolify no ejecuta el bootstrap local (`compose.bootstrap.yaml`), así que la cuenta operadora no se crea sola. Hay dos caminos:
+
+1. **Bootstrap en el host antes del recurso.** Levanta el mismo proyecto en el servidor (clon + `docker compose -f compose.yaml -f compose.bootstrap.yaml up -d`), crea la cuenta por `http://localhost:8111` con túnel SSH y, al terminar, apaga el bootstrap y exporta los volúmenes al proyecto de Coolify. Después marca `OPERATOR_ACCOUNT_CREATED=true`.
+2. **Primer arranque permisivo.** Despliega con `OPERATOR_ACCOUNT_CREATED=false`. Los servicios arrancan, pero el contenedor `formbricks` se reinicia hasta que completes el alta por la UI pública (no hay acceso local al bootstrap). Tras crear la cuenta y verificar que entra/sale, cambia la variable a `true` y redeploy.
+
+El validador no prueba credenciales ni el estado de la cuenta: `OPERATOR_ACCOUNT_CREATED=true` es una confirmación operativa del operador, no un atajo.
+
+En despliegue manual, al salir del bootstrap detener con ambos archivos antes de recrear solo con compose.yaml, para retirar puertos locales y Mailpit.
 
 ## Persistencia y respaldo
 Se nombran cuatro volúmenes: postgres (las bases Formbricks y SpiceDB, roles y extensiones), redis (sesiones/colas), uploads y saml (rutas declaradas por la imagen, aunque no se configure SAML). El servicio permissions prepara los volúmenes de la app para UID1001. El respaldo se realiza con todos los servicios de datos detenidos y conserva propietarios numéricos. Ver docs/RESPALDO.md.
