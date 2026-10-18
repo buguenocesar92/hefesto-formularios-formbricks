@@ -1,4 +1,6 @@
-name: ${COMPOSE_PROJECT_NAME:-hefesto-formularios}
+# Coolify asigna el nombre del proyecto de Docker Compose al renderizar;
+# un `name:` a nivel raíz entra en conflicto con el proyecto que Coolify crea,
+# así que se omite.
 services:
   postgres:
     restart: always
