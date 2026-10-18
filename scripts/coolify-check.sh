@@ -27,6 +27,18 @@ readonly -a COMPOSES=(
     ".:compose.yaml"
 )
 
+# Servicios one-shot que Coolify debe tolerar en exited 0 vía exclude_from_hc.
+# Docker Compose strict rechaza esta extensión; el script la sanitiza antes
+# de renderizar y la verifica por separado.
+readonly -a COOLIFY_ONESHOTS=(
+    "authzed-db-bootstrap"
+    "spicedb-migrate"
+    "formbricks-migrate"
+    "authzed-initialize"
+    "hub-migrate"
+    "permissions"
+)
+
 # Variables que se tratan como URL (toman https://ejemplo.invalid).
 readonly URL_VARS_REGEX='^(WEBAPP_URL|NEXTAUTH_URL|CUBEJS_API_URL|HUB_API_URL|TAXONOMY_SERVICE_URL)$'
 
@@ -38,13 +50,26 @@ fail() {
     exit 1
 }
 
+# Comprueba las dependencias antes de tocar nada: si falta una, el error
+# posterior ("no se pudo parsear", "jq no encontrado") confunde y oculta la
+# causa real.
+command -v docker >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1 \
+    || fail "falta docker (con el plugin compose v2)"
+docker compose version >/dev/null 2>&1 2>&1 \
+    || fail "falta docker compose v2 (docker compose version no responde)"
+command -v jq >/dev/null 2>&1 || fail "falta jq"
+command -v python3 >/dev/null 2>&1 || fail "falta python3"
+python3 -c 'import yaml' 2>/dev/null || fail "falta python3-yaml (PyYAML)"
+
 cd "$REPO_ROOT"
 
-# Directorio de trabajo temporal (reutilizable si hay reintentos).
-WORKDIR="${TMPDIR:-/tmp}/coolify-check"
-mkdir -p "$WORKDIR"
-DOCKER_CFG="$WORKDIR/docker-config"
-mkdir -p "$DOCKER_CFG"
+# Directorio de trabajo temporal único por ejecución; mktemp evita pisar o
+# colisionar con otras sesiones paralelas y con un symlink preexistente.
+WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/coolify-check.XXXXXX")"
+# DOCKER_CONFIG redirige a un HOME de docker escribible: silencia el warning
+# "permission denied" sobre ~/.docker/config.json sin tocar el del usuario.
+export DOCKER_CONFIG="$WORKDIR/docker-config"
+mkdir -p "$DOCKER_CONFIG"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 # Extrae del YAML fuente, en una sola pasada:
@@ -86,6 +111,50 @@ print(json.dumps({
 PY
 }
 
+# Genera una copia del compose sin las extensiones de Coolify que el esquema
+# strict de Docker Compose rechaza (exclude_from_hc). Coolify las lee del
+# archivo original; esta copia se pasa solo a `docker compose config`.
+strip_coolify_extensions() {
+    local src="$1"
+    local dst="$2"
+    python3 - "$src" "$dst" <<'PY'
+import sys, yaml
+with open(sys.argv[1]) as fh:
+    doc = yaml.safe_load(fh) or {}
+removed = 0
+for name, svc in (doc.get("services") or {}).items():
+    if isinstance(svc, dict) and "exclude_from_hc" in svc:
+        del svc["exclude_from_hc"]
+        removed += 1
+with open(sys.argv[2], "w") as fh:
+    yaml.safe_dump(doc, fh, default_flow_style=False, sort_keys=False)
+print(f"sanitized: dropped exclude_from_hc on {removed} service(s)", file=sys.stderr)
+PY
+}
+
+# Comprueba que los one-shots declarados en COOLIFY_ONESHOTS llevan
+# exclude_from_hc en el compose original (no en la copia sanitizada).
+check_coolify_extensions() {
+    local compose_path="$1"
+    COOLIFY_ONESHOTS_STR="${COOLIFY_ONESHOTS[*]}"
+    export COOLIFY_ONESHOTS_STR
+    COOLIFY_COMPOSE_PATH="$compose_path"
+    export COOLIFY_COMPOSE_PATH
+    python3 - <<'PY'
+import os, sys, yaml
+oneshots = os.environ["COOLIFY_ONESHOTS_STR"].split()
+with open(os.environ["COOLIFY_COMPOSE_PATH"]) as fh:
+    doc = yaml.safe_load(fh) or {}
+services = doc.get("services") or {}
+missing = [s for s in oneshots
+           if not isinstance(services.get(s), dict)
+           or services[s].get("exclude_from_hc") is not True]
+if missing:
+    print("faltan exclude_from_hc en: " + ", ".join(missing), file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
 check_compose() {
     local base_dir="$1"
     local compose_file="$2"
@@ -96,6 +165,16 @@ check_compose() {
     if [[ ! -f "$compose_path" ]]; then
         fail "${base_dir}/${compose_file}: archivo inexistente"
     fi
+
+    # Comprueba las extensiones de Coolify sobre el compose ORIGINAL.
+    check_coolify_extensions "$compose_path" \
+        || fail "${compose_file}: uno o más one-shots sin exclude_from_hc (Coolify los tolera en exited 0)"
+
+    # Genera copia sanitizada para pasar a `docker compose config`,
+    # que con esquema strict rechaza exclude_from_hc.
+    local sanitized="$WORKDIR/compose.sanitized.yaml"
+    strip_coolify_extensions "$compose_path" "$sanitized" \
+        || fail "${compose_file}: no se pudo sanear el YAML"
 
     # Validar YAML fuente: nada de `name:` raíz ni volúmenes/redes con `name:`.
     local meta
@@ -137,7 +216,7 @@ check_compose() {
     local rc=0
     docker compose \
         --project-directory "$REPO_ROOT/$base_dir" \
-        -f "$compose_file" \
+        -f "$sanitized" \
         --env-file "$env_file" \
         config --format json \
         > "$WORKDIR/doc.json" \
