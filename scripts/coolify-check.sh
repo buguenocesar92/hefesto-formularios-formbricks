@@ -155,6 +155,96 @@ if missing:
 PY
 }
 
+# Comprueba que el servicio web `formbricks` declara healthcheck en el compose
+# fuente (no en la copia sanitizada). Coolify lo usa para detectar cuándo la
+# app está lista; sin él, el proxy recibe tráfico antes de que el proceso
+# esté vivo y se cae el primer request.
+check_formbricks_healthcheck() {
+    local compose_path="$1"
+    COOLIFY_COMPOSE_PATH="$compose_path"
+    export COOLIFY_COMPOSE_PATH
+    python3 - <<'PY'
+import os, sys, yaml
+with open(os.environ["COOLIFY_COMPOSE_PATH"]) as fh:
+    doc = yaml.safe_load(fh) or {}
+svc = (doc.get("services") or {}).get("formbricks")
+if not isinstance(svc, dict):
+    print("servicio formbricks ausente del compose", file=sys.stderr)
+    sys.exit(1)
+if not isinstance(svc.get("healthcheck"), dict):
+    print("formbricks sin healthcheck", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+# Comprueba que los tres disables de flujo de correo están parametrizados en
+# el compose fuente: la cadena `VAR: '0'` literal no debe aparecer; deben
+# usar la forma `${VAR:-0}` para que Coolify pueda inyectar 1 sin tocar el
+# compose. Las vars validadas: EMAIL_VERIFICATION_DISABLED,
+# PASSWORD_RESET_DISABLED, INVITE_DISABLED.
+check_disables_parametrized() {
+    local compose_path="$1"
+    COOLIFY_COMPOSE_PATH="$compose_path"
+    export COOLIFY_COMPOSE_PATH
+    COOLIFY_DISABLE_VARS_STR="EMAIL_VERIFICATION_DISABLED PASSWORD_RESET_DISABLED INVITE_DISABLED"
+    export COOLIFY_DISABLE_VARS_STR
+    python3 - <<'PY'
+import os, re, sys
+with open(os.environ["COOLIFY_COMPOSE_PATH"]) as fh:
+    text = fh.read()
+hardcoded = re.compile(r"^\s*(?P<k>EMAIL_VERIFICATION_DISABLED|PASSWORD_RESET_DISABLED|INVITE_DISABLED):\s*'0'\s*$",
+                       re.MULTILINE)
+hits = hardcoded.findall(text)
+if hits:
+    print("disables hardcoded '0' en compose: " + ", ".join(sorted(set(hits))), file=sys.stderr)
+    sys.exit(1)
+# Además, cada disable debe aparecer al menos una vez con la forma ${VAR:-...}
+# para que Coolify pueda inyectar el valor real. Si solo aparecen como
+# literales, no son parametrizables.
+for var in os.environ["COOLIFY_DISABLE_VARS_STR"].split():
+    pat = re.compile(r"\$\{\s*" + re.escape(var) + r"\s*:-")
+    if not pat.search(text):
+        print("disable no parametrizado: " + var, file=sys.stderr)
+        sys.exit(1)
+PY
+}
+
+# Ejecuta ops/check-env.cjs con SMTP_READY=false y los disables mínimos, y
+# exige exit 0. Esto reproduce la rúbrica del README: el validador del
+# servicio web NO aborta cuando el operador arranca sin SMTP y fija los dos
+# disables obligatorios.
+check_check_env_no_smtp() {
+    local repo_root="$1"
+    local check_env="$repo_root/ops/check-env.cjs"
+    [[ -f "$check_env" ]] || fail "check-env.cjs no encontrado"
+
+    # 64 chars hex no secretos para los cinco secrets requeridos.
+    local hex64
+    hex64="$(printf 'a%.0s' $(seq 1 64))"
+
+    local rc=0
+    WEBAPP_URL="https://ejemplo.invalid" \
+        NEXTAUTH_URL="https://ejemplo.invalid" \
+        NEXTAUTH_SECRET="$hex64" \
+        ENCRYPTION_KEY="$hex64" \
+        CRON_SECRET="$hex64" \
+        HUB_API_KEY="$hex64" \
+        CUBEJS_API_SECRET="$hex64" \
+        OPERATOR_ACCOUNT_CREATED=true \
+        SMTP_READY=false \
+        EMAIL_VERIFICATION_DISABLED=1 \
+        PASSWORD_RESET_DISABLED=1 \
+        node "$check_env" > "$WORKDIR/check-env.out" 2> "$WORKDIR/check-env.err" \
+        || rc=$?
+
+    if [[ $rc -ne 0 ]]; then
+        local out err
+        out=$(cat "$WORKDIR/check-env.out" 2>/dev/null || true)
+        err=$(cat "$WORKDIR/check-env.err" 2>/dev/null || true)
+        fail "check-env.cjs aborta con SMTP_READY=false (rc=${rc}): stdout=${out} stderr=${err}"
+    fi
+}
+
 check_compose() {
     local base_dir="$1"
     local compose_file="$2"
@@ -169,6 +259,21 @@ check_compose() {
     # Comprueba las extensiones de Coolify sobre el compose ORIGINAL.
     check_coolify_extensions "$compose_path" \
         || fail "${compose_file}: uno o más one-shots sin exclude_from_hc (Coolify los tolera en exited 0)"
+
+    # Comprueba que el servicio web tiene healthcheck (sin él, el proxy
+    # recibe tráfico antes de que el proceso esté listo).
+    check_formbricks_healthcheck "$compose_path" \
+        || fail "${compose_file}: el servicio web formbricks debe declarar healthcheck"
+
+    # Comprueba que los tres disables de correo están parametrizados
+    # (no hardcoded '0') para que Coolify pueda inyectar el valor real.
+    check_disables_parametrized "$compose_path" \
+        || fail "${compose_file}: los disables de correo deben estar parametrizados con \${VAR:-0}"
+
+    # Comprueba que el validador del servicio web (check-env.cjs) acepta
+    # arrancar con SMTP_READY=false y los dos disables obligatorios.
+    check_check_env_no_smtp "$REPO_ROOT" \
+        || fail "${compose_file}: check-env.cjs aborta con SMTP_READY=false (verificá EMAIL_VERIFICATION_DISABLED y PASSWORD_RESET_DISABLED)"
 
     # Genera copia sanitizada para pasar a `docker compose config`,
     # que con esquema strict rechaza exclude_from_hc.

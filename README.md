@@ -45,7 +45,7 @@ Asignar un subdominio HTTPS únicamente al servicio **formbricks**, puerto **300
 ### Despliegue en Coolify (MVP Hefesto)
 El compose no declara `name:` a nivel raíz: Coolify asigna el nombre del proyecto al renderizar y, sin esa línea, el proyecto local toma el nombre de la carpeta. Si vienes de una instalación manual con `COMPOSE_PROJECT_NAME=hefesto-formularios`, fija esa variable en `.env` para conservar los volúmenes `postgres`, `redis`, `uploads` y `saml` que ya tengas con datos.
 
-Variables obligatorias (solo nombres; valores reales en `.env`):
+Variables obligatorias con `SMTP_READY=true` (solo nombres; valores reales en `.env`):
 
 - `POSTGRES_PASSWORD`
 - `AUTHZED_DATABASE_PASSWORD`
@@ -56,14 +56,41 @@ Variables obligatorias (solo nombres; valores reales en `.env`):
 - `MAIL_FROM`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`
 - `OPERATOR_ACCOUNT_CREATED`
 
-Correo opcional. El kit puede partir sin SMTP real: pon `SMTP_READY=false` y, ya que el registro y la recuperación de contraseña necesitan correo, también `EMAIL_VERIFICATION_DISABLED=1`, `PASSWORD_RESET_DISABLED=1` y `INVITE_DISABLED=1`. Sin esos tres disables, el validador del servicio web (`ops/check-env.cjs`) aborta con un mensaje claro. Cuando actives el SMTP real más adelante, deja los disables en `0`.
+Correo opcional. El kit puede partir sin SMTP real: pon `SMTP_READY=false`. En ese caso `MAIL_FROM`, `SMTP_HOST`, `SMTP_USER` y `SMTP_PASSWORD` **no son obligatorias** y basta con dejarlas vacías o no declararlas. Como el registro y la recuperación de contraseña necesitan correo, fija también `EMAIL_VERIFICATION_DISABLED=1` y `PASSWORD_RESET_DISABLED=1` — el validador del servicio web (`ops/check-env.cjs`) aborta con un mensaje claro si alguna falta. `INVITE_DISABLED=1` es recomendado para endurecer el modo sin SMTP, pero `check-env.cjs` **no lo valida**: ponlo manualmente si quieres bloquear invitaciones. Cuando actives el SMTP real más adelante, deja los disables en `0` y rellena las cuatro variables de correo.
 
-Cuenta operadora. Coolify no ejecuta el bootstrap local (`compose.bootstrap.yaml`), así que la cuenta operadora no se crea sola. Hay dos caminos:
+Cuenta operadora. Coolify no ejecuta el bootstrap local (`compose.bootstrap.yaml`), así que la cuenta operadora no se crea sola y `ops/check-env.cjs` aborta si `OPERATOR_ACCOUNT_CREATED` no es `true`. El único camino viable es hacer el bootstrap en el host antes de que Coolify tome el relevo:
 
-1. **Bootstrap en el host antes del recurso.** Levanta el mismo proyecto en el servidor (clon + `docker compose -f compose.yaml -f compose.bootstrap.yaml up -d`), crea la cuenta por `http://localhost:8111` con túnel SSH y, al terminar, apaga el bootstrap y exporta los volúmenes al proyecto de Coolify. Después marca `OPERATOR_ACCOUNT_CREATED=true`.
-2. **Primer arranque permisivo.** Despliega con `OPERATOR_ACCOUNT_CREATED=false`. Los servicios arrancan, pero el contenedor `formbricks` se reinicia hasta que completes el alta por la UI pública (no hay acceso local al bootstrap). Tras crear la cuenta y verificar que entra/sale, cambia la variable a `true` y redeploy.
+1. **Clonar el repo en el servidor** y dejar el checkout en una carpeta estable. Coolify también clonará ese repo en su propia carpeta; ambos deben compartir `COMPOSE_PROJECT_NAME` para que los volúmenes coincidan.
+2. **Levantar el bootstrap con el mismo nombre de proyecto** que usará Coolify (en `.env` o como variable de entorno):
+
+   ```sh
+   cd /ruta/al/checkout
+   echo 'COMPOSE_PROJECT_NAME=hefesto-formularios' >> .env
+   docker compose -f compose.yaml -f compose.bootstrap.yaml up -d
+   ```
+
+   El override expone `formbricks` en `127.0.0.1:8111` y Mailpit en `127.0.0.1:8029` — no los publiques.
+3. **Comprobar que los volúmenes son los mismos** que usará Coolify. Si Coolify va a desplegar con `COMPOSE_PROJECT_NAME=hefesto-formularios`, los volúmenes se llamarán `hefesto-formularios_postgres`, `hefesto-formularios_redis`, `hefesto-formularios_uploads` y `hefesto-formularios_saml`. Confírmalo con `docker volume ls | grep hefesto-formularios_`.
+4. **Crear la cuenta operadora** desde tu equipo con `ssh -L 8111:127.0.0.1:8111 -L 8029:127.0.0.1:8029 usuario@servidor`, abrir `http://localhost:8111`, verificar el correo en Mailpit y probar entrada, salida y recuperación.
+5. **Bajar el bootstrap** (deja los volúmenes intactos) y dejar Coolify al mando:
+
+   ```sh
+   docker compose -f compose.yaml -f compose.bootstrap.yaml down
+   ```
+
+6. **Marcar `OPERATOR_ACCOUNT_CREATED=true`** en las variables del recurso de Coolify y redesplegar.
 
 El validador no prueba credenciales ni el estado de la cuenta: `OPERATOR_ACCOUNT_CREATED=true` es una confirmación operativa del operador, no un atajo.
+
+Uso manual con `docker compose` (sin Coolify). `exclude_from_hc` es una extensión propietaria de Coolify que el esquema strict de Docker Compose v2.40+ rechaza con «additional properties not allowed». Para validar o levantar `compose.yaml` con la CLI, sanéalo en línea:
+
+```sh
+yq 'del(.services[].exclude_from_hc)' compose.yaml > /tmp/compose.manual.yaml
+docker compose -f /tmp/compose.manual.yaml config --quiet
+docker compose -f /tmp/compose.manual.yaml up -d
+```
+
+`scripts/coolify-check.sh` aplica la misma limpieza sobre una copia temporal antes de invocar `docker compose config`, así que la validación local sigue funcionando aunque el archivo fuente conserve la extensión.
 
 En despliegue manual, al salir del bootstrap detener con ambos archivos antes de recrear solo con compose.yaml, para retirar puertos locales y Mailpit.
 
