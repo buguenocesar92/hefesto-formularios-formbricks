@@ -9,9 +9,13 @@ if(local){if(e.WEBAPP_URL!=='http://localhost:8111')fail('Bootstrap solo http://
 else{
  if(u.protocol!=='https:')fail('HTTPS requerido');
  if(e.OPERATOR_ACCOUNT_CREATED!=='true')fail('Crear y comprobar cuenta operadora en bootstrap');
- if(e.SMTP_READY!=='true')fail('Probar SMTP real y confirmar SMTP_READY');
- if(!e.SMTP_HOST||e.SMTP_HOST==='REEMPLAZAR'||!e.SMTP_USER||!e.SMTP_PASSWORD||e.SMTP_PASSWORD==='REEMPLAZAR')fail('Completar SMTP real');
- if(e.SMTP_PORT!=='465'||e.SMTP_SECURE_ENABLED!=='1')fail('Este kit configura SMTP TLS implicito en 465');
+ if(e.SMTP_READY==='true'){
+  if(!e.SMTP_HOST||e.SMTP_HOST==='REEMPLAZAR'||!e.SMTP_USER||!e.SMTP_PASSWORD||e.SMTP_PASSWORD==='REEMPLAZAR')fail('Completar SMTP real');
+  if(e.SMTP_PORT!=='465'||e.SMTP_SECURE_ENABLED!=='1')fail('Este kit configura SMTP TLS implicito en 465');
+ }else{
+  if(e.EMAIL_VERIFICATION_DISABLED!=='1')fail('Con SMTP_READY!=true, fijar EMAIL_VERIFICATION_DISABLED=1');
+  if(e.PASSWORD_RESET_DISABLED!=='1')fail('Con SMTP_READY!=true, fijar PASSWORD_RESET_DISABLED=1');
+ }
 }
 if(e.NEXTAUTH_URL!==e.WEBAPP_URL)fail('NEXTAUTH_URL debe coincidir con WEBAPP_URL');
 console.log('Variables de servicio validadas; no se han probado credenciales SMTP ni estado de cuenta.');
