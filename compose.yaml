@@ -1,6 +1,11 @@
 # Coolify asigna el nombre del proyecto de Docker Compose al renderizar;
 # un `name:` a nivel raíz entra en conflicto con el proyecto que Coolify crea,
 # así que se omite.
+#
+# Los servicios de un solo uso (migraciones, bootstrap, permisos) mantienen
+# `restart: 'no'` y sus consumidores `condition: service_completed_successfully`.
+# La extension de Coolify `exclude_from_hc` no forma parte de la Compose
+# Specification y hace que `docker compose config` rechace el fichero.
 services:
   postgres:
     restart: always
@@ -19,7 +24,6 @@ services:
       retries: 30
       start_period: 30s
   authzed-db-bootstrap:
-    exclude_from_hc: true
     image: pgvector/pgvector:pg18@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11
     restart: 'no'
     entrypoint:
@@ -37,7 +41,6 @@ services:
       postgres:
         condition: service_healthy
   spicedb-migrate:
-    exclude_from_hc: true
     image: authzed/spicedb:v1.52.0@sha256:1d205e9e98e39d87f9640893a06787c854a77d1ffcc3f7ece5e3293896565aa9
     restart: 'no'
     command: datastore migrate head
@@ -87,7 +90,6 @@ services:
       retries: 30
       start_period: 10s
   formbricks-migrate:
-    exclude_from_hc: true
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD_URL_ENCODED:-${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}}@postgres:5432/formbricks?schema=public
       WEBAPP_URL: ${WEBAPP_URL:?Configurar WEBAPP_URL}
@@ -254,7 +256,6 @@ services:
       spicedb:
         condition: service_healthy
   authzed-initialize:
-    exclude_from_hc: true
     image: ghcr.io/formbricks/formbricks:6.0.2@sha256:4c0134b1c9c919d6d63986d5ba2e3ff4a50cf02a05b3173922c75c17539ef4cf
     restart: 'no'
     entrypoint:
@@ -283,7 +284,6 @@ services:
       spicedb:
         condition: service_healthy
   hub-migrate:
-    exclude_from_hc: true
     image: ghcr.io/formbricks/hub@sha256:967089f22585f3c3730e455b8b20885b0739f26b5ce5e034324658aa51d627f2
     restart: 'no'
     entrypoint:
@@ -368,7 +368,6 @@ services:
     healthcheck:
       disable: true
   permissions:
-    exclude_from_hc: true
     image: pgvector/pgvector:pg18@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11
     restart: 'no'
     user: '0'
