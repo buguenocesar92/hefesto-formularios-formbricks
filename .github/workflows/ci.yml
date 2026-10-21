@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+      - coolify
+      - 'feature/**'
+      - 'bugfix/**'
+      - 'hotfix/**'
+      - 'release/**'
+  pull_request:
+    branches:
+      - develop
+      - main
+      - coolify
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validar:
+    name: Validar compose y scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Repositorio
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instalar herramientas
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bats shellcheck
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz | tar xz gitleaks
+          sudo mv gitleaks /usr/local/bin/
+          gitleaks version
+          docker compose version
+
+      - name: Sintaxis de los scripts de shell
+        run: |
+          set -euo pipefail
+          bash -n scripts/coolify-check.sh
+
+      - name: Shellcheck
+        run: |
+          set -euo pipefail
+          shellcheck --shell=bash scripts/coolify-check.sh
+
+      - name: Suite bats
+        run: |
+          set -euo pipefail
+          bats tests/
+
+      - name: Compose valido
+        run: |
+          set -euo pipefail
+          docker compose --env-file .env.example -f compose.yaml config --quiet
+
+      - name: Sin secretos
+        run: |
+          set -euo pipefail
+          gitleaks detect --source . --no-banner --redact --exit-code 1
