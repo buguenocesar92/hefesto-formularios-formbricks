@@ -18,8 +18,12 @@
 
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Declaracion y asignacion separadas: si el `cd` falla, el script aborta con
+# `set -e` en vez de enmascarar el fallo en el `readonly` (SC2155).
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+readonly SCRIPT_DIR
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+readonly REPO_ROOT
 
 # Composes bajo contrato: "<base_dir_relativo>:<archivo>".
 # Este kit es postgres-local, base raíz y un único compose.
@@ -111,30 +115,18 @@ print(json.dumps({
 PY
 }
 
-# Genera una copia del compose sin las extensiones de Coolify que el esquema
-# strict de Docker Compose rechaza (exclude_from_hc). Coolify las lee del
-# archivo original; esta copia se pasa solo a `docker compose config`.
-strip_coolify_extensions() {
-    local src="$1"
-    local dst="$2"
-    python3 - "$src" "$dst" <<'PY'
-import sys, yaml
-with open(sys.argv[1]) as fh:
-    doc = yaml.safe_load(fh) or {}
-removed = 0
-for name, svc in (doc.get("services") or {}).items():
-    if isinstance(svc, dict) and "exclude_from_hc" in svc:
-        del svc["exclude_from_hc"]
-        removed += 1
-with open(sys.argv[2], "w") as fh:
-    yaml.safe_dump(doc, fh, default_flow_style=False, sort_keys=False)
-print(f"sanitized: dropped exclude_from_hc on {removed} service(s)", file=sys.stderr)
-PY
-}
-
-# Comprueba que los one-shots declarados en COOLIFY_ONESHOTS llevan
-# exclude_from_hc en el compose original (no en la copia sanitizada).
-check_coolify_extensions() {
+# Comprueba el contrato de los servicios one-shot sobre el compose ORIGINAL.
+#
+# La extension `exclude_from_hc` pertenece a docker-compose v1 (Python) y NO
+# existe en la Compose Specification actual: con ella presente,
+# `docker compose config` rechaza el compose entero y el kit no se puede
+# validar, ni desplegar, ni comprobar en CI.
+#
+# El equivalente moderno ya esta en el compose y es lo que se verifica aqui:
+#   - el one-shot declara `restart: 'no'` (termina en exited 0 y no se
+#     arrastra al calculo agregado de salud);
+#   - quien lo consume lo hace con `condition: service_completed_successfully`.
+check_oneshots() {
     local compose_path="$1"
     COOLIFY_ONESHOTS_STR="${COOLIFY_ONESHOTS[*]}"
     export COOLIFY_ONESHOTS_STR
@@ -146,11 +138,48 @@ oneshots = os.environ["COOLIFY_ONESHOTS_STR"].split()
 with open(os.environ["COOLIFY_COMPOSE_PATH"]) as fh:
     doc = yaml.safe_load(fh) or {}
 services = doc.get("services") or {}
-missing = [s for s in oneshots
-           if not isinstance(services.get(s), dict)
-           or services[s].get("exclude_from_hc") is not True]
-if missing:
-    print("faltan exclude_from_hc en: " + ", ".join(missing), file=sys.stderr)
+
+# 1) La clave legacy no puede volver al compose.
+legacy = sorted(
+    name for name, svc in services.items()
+    if isinstance(svc, dict) and "exclude_from_hc" in svc
+)
+if legacy:
+    print("exclude_from_hc (docker-compose v1) no es valido en Compose v2+: "
+          + ", ".join(legacy), file=sys.stderr)
+    sys.exit(1)
+
+# 2) Cada one-shot se declara con `restart: 'no'`.
+sin_restart = sorted(
+    s for s in oneshots
+    if not isinstance(services.get(s), dict) or services[s].get("restart") != "no"
+)
+if sin_restart:
+    print("one-shot sin restart: 'no': " + ", ".join(sin_restart), file=sys.stderr)
+    sys.exit(1)
+
+# 3) Cada one-shot se consume con `condition: service_completed_successfully`.
+problemas = []
+for s in oneshots:
+    consumidores = [
+        otro for otro, svc in services.items()
+        if isinstance(svc, dict) and s in (svc.get("depends_on") or {})
+    ]
+    if not consumidores:
+        problemas.append(f"{s} (nadie depende de el)")
+        continue
+    for otro in consumidores:
+        dep = services[otro].get("depends_on") or {}
+        if isinstance(dep, list):
+            # Forma corta: significa "started", no "completed".
+            problemas.append(f"{s} <- {otro} (depends_on en forma corta)")
+            continue
+        condicion = (dep.get(s) or {}).get("condition")
+        if condicion != "service_completed_successfully":
+            problemas.append(f"{s} <- {otro} (condition={condicion!r})")
+if problemas:
+    print("one-shot sin condition: service_completed_successfully: "
+          + "; ".join(problemas), file=sys.stderr)
     sys.exit(1)
 PY
 }
@@ -256,9 +285,9 @@ check_compose() {
         fail "${base_dir}/${compose_file}: archivo inexistente"
     fi
 
-    # Comprueba las extensiones de Coolify sobre el compose ORIGINAL.
-    check_coolify_extensions "$compose_path" \
-        || fail "${compose_file}: uno o más one-shots sin exclude_from_hc (Coolify los tolera en exited 0)"
+    # Comprueba el contrato de los one-shots sobre el compose ORIGINAL.
+    check_oneshots "$compose_path" \
+        || fail "${compose_file}: los one-shots no cumplen el contrato (restart: 'no' + condition: service_completed_successfully)"
 
     # Comprueba que el servicio web tiene healthcheck (sin él, el proxy
     # recibe tráfico antes de que el proceso esté listo).
@@ -274,12 +303,6 @@ check_compose() {
     # arrancar con SMTP_READY=false y los dos disables obligatorios.
     check_check_env_no_smtp "$REPO_ROOT" \
         || fail "${compose_file}: check-env.cjs aborta con SMTP_READY=false (verificá EMAIL_VERIFICATION_DISABLED y PASSWORD_RESET_DISABLED)"
-
-    # Genera copia sanitizada para pasar a `docker compose config`,
-    # que con esquema strict rechaza exclude_from_hc.
-    local sanitized="$WORKDIR/compose.sanitized.yaml"
-    strip_coolify_extensions "$compose_path" "$sanitized" \
-        || fail "${compose_file}: no se pudo sanear el YAML"
 
     # Validar YAML fuente: nada de `name:` raíz ni volúmenes/redes con `name:`.
     local meta
@@ -317,11 +340,13 @@ check_compose() {
         fi
     done <<< "$vars"
 
-    # Renderiza a JSON. Captura stdout y stderr por separado.
+    # Renderiza a JSON el compose ORIGINAL (sin copias sanitizadas: el fichero
+    # que se despliega tiene que ser el que valida Compose v2).
+    # Captura stdout y stderr por separado.
     local rc=0
     docker compose \
         --project-directory "$REPO_ROOT/$base_dir" \
-        -f "$sanitized" \
+        -f "$compose_path" \
         --env-file "$env_file" \
         config --format json \
         > "$WORKDIR/doc.json" \
